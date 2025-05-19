@@ -27,6 +27,13 @@ class ArcheTypePredictor():
         
         args = self.parse_additional_args(args, user_args)
 
+        # init tokenizer! Note it worked with that
+        #tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+        #base_model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name).cuda()
+
+        #args.addl_args["tokenizer"] = tokenizer
+        #args.addl_args["base_model"] = base_model
+
         save_path = Path(args.save_path)
         if not os.path.exists(save_path.parent):
             os.makedirs(save_path.parent)
