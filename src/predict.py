@@ -61,6 +61,10 @@ class ArcheTypePredictor():
             label_set = {"name" : "custom", "label_set" : args.custom_labels, "dict_map" : {c : c for c in args.custom_labels}, 'abbrev_map' : {c : c for c in args.custom_labels}}
         else:
             label_set = get_lsd(args.label_set)
+
+        # default params
+        params = user_args.get("params", {"top_p": 0.9, "temperature": 0.7})
+
         args.addl_args = {"MAX_LEN" : 512, 
                 "model_path" : user_args.get("model_path", ""), 
                 "lsd" : label_set, 
@@ -69,7 +73,9 @@ class ArcheTypePredictor():
                 "partial_oracle" : user_args.get("partial_oracle", False),
                 "input_labels" : args.input_labels,
                 "return_prompt" : False,
-                "k_shot" : int(user_args.get("k_shot", 0))}
+                "k_shot" : int(user_args.get("k_shot", 0)),
+                "params": params
+        }
         return args
 
     def annotate_columns(self):
