@@ -1,4 +1,5 @@
 from accelerate import infer_auto_device_map, init_empty_weights, load_checkpoint_and_dispatch
+from together import Together
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, AutoModelForSeq2SeqLM, T5ForConditionalGeneration, LlamaTokenizer, LlamaForCausalLM, pipeline
 from langchain.llms import HuggingFacePipeline
 from langchain import PromptTemplate, LLMChain
@@ -17,6 +18,7 @@ import argparse
 import gc
 import time
 
+from src.check_llama import API_KEY
 from src.const import *
 from src.data import *
 from src.match import *
@@ -73,6 +75,8 @@ def query_correct_model(model, prompt, context_labels, context, session, link, l
         orig_ans = get_internlm_resp(prompt, 1, args)
     elif any(["topp-zs" in model, "flan" in model]):
         orig_ans = get_topp_resp(prompt, 1, args)
+    elif "together_llama" in model:
+        orig_ans = call_together_model(prompt, lsd, API_KEY)
     else:
         orig_ans = call_llama_model(session, link, prompt, lsd, None, args)
     # print("Original answer: ", orig_ans)
@@ -85,6 +89,18 @@ def call_llama_model(session, link, prompt, lsd, var_params, args):
         ans = requests.post(link, json=make_json(prompt, var_params, args))
     ans = ans.json()["data"]
     ans_n = fix_labels(ans[0][len(prompt):].strip(), lsd)
+    return ans_n
+
+def call_together_model(prompt, lsd, API_KEY, model: str="meta-llama/Meta-Llama-3-8B-Instruct-Lite"):
+    client = Together(api_key=API_KEY)
+
+    ans = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        stream=False
+    ).choices[0].delta.content
+
+    ans_n = fix_labels(ans, lsd)
     return ans_n
 
 def call_gpt_model(prompt, lsd, model="gpt-3.5-turbo"):
@@ -486,7 +502,7 @@ def fuzzy_label_match(orig_ans, fixed_labels, session, link, prompt, lsd, model,
             elif any(["topp-zs" in model, "flan-t5-xxl-zs" in model, "flan-ul2-zs" in model, "flan-t5-base-zs" in model]):
                 ans_n = get_topp_resp(prompt, k, args)
             else:
-                print("HELLO")
+                #print("HELLO")
                 print("Running default (local saved checkpoint) llama resampling -- THIS SHOULD NOT HAPPEN if you are running zero-shot models, please check model name")
                 top_p = args['params']['top_p']
                 temp = args['params']['temperature']
