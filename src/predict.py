@@ -27,6 +27,13 @@ class ArcheTypePredictor():
         
         args = self.parse_additional_args(args, user_args)
 
+        # init tokenizer! Note it worked with that
+        #tokenizer = AutoTokenizer.from_pretrained(args.model_name)
+        #base_model = AutoModelForSeq2SeqLM.from_pretrained(args.model_name).cuda()
+
+        #args.addl_args["tokenizer"] = tokenizer
+        #args.addl_args["base_model"] = base_model
+
         save_path = Path(args.save_path)
         if not os.path.exists(save_path.parent):
             os.makedirs(save_path.parent)
@@ -61,6 +68,10 @@ class ArcheTypePredictor():
             label_set = {"name" : "custom", "label_set" : args.custom_labels, "dict_map" : {c : c for c in args.custom_labels}, 'abbrev_map' : {c : c for c in args.custom_labels}}
         else:
             label_set = get_lsd(args.label_set)
+
+        # default params
+        params = user_args.get("params", {"top_p": 0.9, "temperature": 0.7})
+
         args.addl_args = {"MAX_LEN" : 512, 
                 "model_path" : user_args.get("model_path", ""), 
                 "lsd" : label_set, 
@@ -69,7 +80,9 @@ class ArcheTypePredictor():
                 "partial_oracle" : user_args.get("partial_oracle", False),
                 "input_labels" : args.input_labels,
                 "return_prompt" : False,
-                "k_shot" : int(user_args.get("k_shot", 0))}
+                "k_shot" : int(user_args.get("k_shot", 0)),
+                "params": params
+        }
         return args
 
     def annotate_columns(self):

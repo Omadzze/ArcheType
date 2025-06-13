@@ -1,4 +1,5 @@
 from accelerate import infer_auto_device_map, init_empty_weights, load_checkpoint_and_dispatch
+from together import Together
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer, AutoModelForSeq2SeqLM, T5ForConditionalGeneration, LlamaTokenizer, LlamaForCausalLM, pipeline
 from langchain.llms import HuggingFacePipeline
 from langchain import PromptTemplate, LLMChain
@@ -17,6 +18,7 @@ import argparse
 import gc
 import time
 
+from src.check_llama import API_KEY
 from src.const import *
 from src.data import *
 from src.match import *
@@ -73,6 +75,8 @@ def query_correct_model(model, prompt, context_labels, context, session, link, l
         orig_ans = get_internlm_resp(prompt, 1, args)
     elif any(["topp-zs" in model, "flan" in model]):
         orig_ans = get_topp_resp(prompt, 1, args)
+    elif "together_llama" in model:
+        orig_ans = call_together_model(prompt, lsd, API_KEY)
     else:
         orig_ans = call_llama_model(session, link, prompt, lsd, None, args)
     # print("Original answer: ", orig_ans)
@@ -80,20 +84,32 @@ def query_correct_model(model, prompt, context_labels, context, session, link, l
 
 def call_llama_model(session, link, prompt, lsd, var_params, args):
     if session:
-      ans = session.post(link, json=make_json(prompt, var_params, args))
+        ans = session.post(link, json=make_json(prompt, var_params, args))
     else:
-      ans = requests.post(link, json=make_json(prompt, var_params, args))
+        ans = requests.post(link, json=make_json(prompt, var_params, args))
     ans = ans.json()["data"]
     ans_n = fix_labels(ans[0][len(prompt):].strip(), lsd)
     return ans_n
 
+def call_together_model(prompt, lsd, API_KEY, model: str="meta-llama/Meta-Llama-3-8B-Instruct-Lite"):
+    client = Together(api_key=API_KEY)
+
+    ans = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "user", "content": prompt}],
+        stream=False
+    ).choices[0].delta.content
+
+    ans_n = fix_labels(ans, lsd)
+    return ans_n
+
 def call_gpt_model(prompt, lsd, model="gpt-3.5-turbo"):
     ans = openai.ChatCompletion.create(
-      model=model,
-      messages=[
-          {"role": "user", "content": prompt},
-      ],
-      temperature=0,
+        model=model,
+        messages=[
+            {"role": "user", "content": prompt},
+        ],
+        temperature=0,
     ).choices[0]['message']['content']
     ans_n = fix_labels(ans, lsd)
     return ans_n
@@ -102,13 +118,13 @@ def get_topp_resp(prompt, k, args):
     # print("starting generate")
     inputs = args["tokenizer"].encode(prompt, return_tensors="pt", add_special_tokens=True, truncation=True).cuda()
     # inputs = inputs[:,:args["MAX_LEN"]-100]
-    outputs = args["base_model"].generate(inputs, 
-                                  max_length=args["MAX_LEN"],
-                                  temperature=0.1*k,
-                                  top_p=0.90-(0.1 * k),
-                                  do_sample=True,
-                                  repetition_penalty=1.3
-                                  )
+    outputs = args["base_model"].generate(inputs,
+                                          max_length=args["MAX_LEN"],
+                                          temperature=0.1*k,
+                                          top_p=0.90-(0.1 * k),
+                                          do_sample=True,
+                                          repetition_penalty=1.3
+                                          )
     orig_ans = args["tokenizer"].decode(outputs[0], skip_special_tokens=True)
     # print("finished generate")
     return orig_ans
@@ -117,13 +133,13 @@ def get_internlm_resp(prompt, k, args):
     end_of_sentence = prompt[-15:]
     inputs = args["tokenizer"].encode(prompt, return_tensors="pt", add_special_tokens=True, truncation=True).cuda()
     #inputs = inputs[:,:args["MAX_LEN"]-100]
-    outputs = args["base_model"].generate(inputs, 
-                                  max_length=args["MAX_LEN"],
-                                  temperature=0.1*k,
-                                  top_p=0.90-(0.1 * k),
-                                  do_sample=True,
-                                  repetition_penalty=1.3
-                                  )
+    outputs = args["base_model"].generate(inputs,
+                                          max_length=args["MAX_LEN"],
+                                          temperature=0.1*k,
+                                          top_p=0.90-(0.1 * k),
+                                          do_sample=True,
+                                          repetition_penalty=1.3
+                                          )
 
     orig_ans = args["tokenizer"].decode(outputs[0], skip_special_tokens=True)
     split_sent = orig_ans.split(end_of_sentence)
@@ -132,124 +148,124 @@ def get_internlm_resp(prompt, k, args):
 
 @retry(Exception, tries=3, delay=3)
 def get_model_resp(lsd: dict, context : list, ground_truth : str, prompt_dict : dict, link : str, response = True, session=None, cbc=None, model="llama", limited_context=None, method = ["ans_contains_gt", "gt_contains_ans", "resample"], args = dict(), do_kshot=False):
-  ground_truth = fix_labels(ground_truth, lsd)
-  all_labels = set([fix_labels(s, lsd) for s in lsd['label_set']])
-  isd4 = "d4" in lsd['name']
-  ispubchem = "pubchem" in lsd['name']
-  ist2d = "T2D" in lsd['name']
-  isef = "EF" in lsd['name']
-  if isd4:
-    target_labels = set(lsd['label_set'])
-    drop_labels = set(['school-dbn', 'school-number', 'permit-types', 'us-state', 'school-grades', 'other-states', 'plate-type', 'borough'])
-    target_labels = target_labels - drop_labels
-    fixed_labels = sorted(list(set([fix_labels(s, lsd) for s in target_labels])))
-  elif ispubchem:
-    target_labels = set(lsd['label_set'])
-    drop_labels = set(['Concept Broader Term', 'Journal ISSN', 'InChI (International Chemical Identifier)', "Book ISBN", 'MD5 Hash'])
-    target_labels = target_labels - drop_labels
-    fixed_labels = sorted(list(set([fix_labels(s, lsd) for s in target_labels])))
-  elif ist2d or isef:
-    target_labels = set(lsd['label_set'])
-    fixed_labels = sorted(list(set([fix_labels(s, lsd) for s in target_labels])))
-  elif "hierarchical" in method and not isd4:
-    dtype = get_base_dtype(limited_context)
-    fixed_labels = sotab_top_hier[dtype]
-  elif (lsd['name'] in ['context_labels', 'context_labels_trim', 'context_labels_small']) and \
-    "gpt" not in model:
-      if len(limited_context) > 1 and all([re.sub('[\W_]+', '', s).isdigit() for s in limited_context]):
-        if args.get("numeric_labels", -1) == -1:
-            args['numeric_labels'] = sorted(list(set([fix_labels(s, lsd) for s in numeric_labels])), key=len, reverse=True)
-        fixed_labels = args['numeric_labels']
-      else:
-        if args.get("non_numeric_labels", -1) == -1:
-            num_labs = set([fix_labels(s, lsd) for s in always_numeric_labels])
-            all_labels = set([fix_labels(s, lsd) for s in lsd['label_set']])
-            args['non_numeric_labels'] = sorted(list(all_labels.difference(num_labs)))
-        fixed_labels = args['non_numeric_labels']
-  else:
-    target_labels = set(lsd['label_set'])
-    lsd['label_set'] = lsd['label_set'] + list(all_labels)
-    fixed_labels = sorted(list(set([fix_labels(s, lsd) for s in target_labels])), key=len, reverse=True)
+    ground_truth = fix_labels(ground_truth, lsd)
+    all_labels = set([fix_labels(s, lsd) for s in lsd['label_set']])
+    isd4 = "d4" in lsd['name']
+    ispubchem = "pubchem" in lsd['name']
+    ist2d = "T2D" in lsd['name']
+    isef = "EF" in lsd['name']
+    if isd4:
+        target_labels = set(lsd['label_set'])
+        drop_labels = set(['school-dbn', 'school-number', 'permit-types', 'us-state', 'school-grades', 'other-states', 'plate-type', 'borough'])
+        target_labels = target_labels - drop_labels
+        fixed_labels = sorted(list(set([fix_labels(s, lsd) for s in target_labels])))
+    elif ispubchem:
+        target_labels = set(lsd['label_set'])
+        drop_labels = set(['Concept Broader Term', 'Journal ISSN', 'InChI (International Chemical Identifier)', "Book ISBN", 'MD5 Hash'])
+        target_labels = target_labels - drop_labels
+        fixed_labels = sorted(list(set([fix_labels(s, lsd) for s in target_labels])))
+    elif ist2d or isef:
+        target_labels = set(lsd['label_set'])
+        fixed_labels = sorted(list(set([fix_labels(s, lsd) for s in target_labels])))
+    elif "hierarchical" in method and not isd4:
+        dtype = get_base_dtype(limited_context)
+        fixed_labels = sotab_top_hier[dtype]
+    elif (lsd['name'] in ['context_labels', 'context_labels_trim', 'context_labels_small']) and \
+            "gpt" not in model:
+        if len(limited_context) > 1 and all([re.sub('[\W_]+', '', s).isdigit() for s in limited_context]):
+            if args.get("numeric_labels", -1) == -1:
+                args['numeric_labels'] = sorted(list(set([fix_labels(s, lsd) for s in numeric_labels])), key=len, reverse=True)
+            fixed_labels = args['numeric_labels']
+        else:
+            if args.get("non_numeric_labels", -1) == -1:
+                num_labs = set([fix_labels(s, lsd) for s in always_numeric_labels])
+                all_labels = set([fix_labels(s, lsd) for s in lsd['label_set']])
+                args['non_numeric_labels'] = sorted(list(all_labels.difference(num_labs)))
+            fixed_labels = args['non_numeric_labels']
+    else:
+        target_labels = set(lsd['label_set'])
+        lsd['label_set'] = lsd['label_set'] + list(all_labels)
+        fixed_labels = sorted(list(set([fix_labels(s, lsd) for s in target_labels])), key=len, reverse=True)
 
-  context_labels = ", ".join(fixed_labels)
+    context_labels = ", ".join(fixed_labels)
 
-  if "check_labels" in method:
-    assert ground_truth in fixed_labels, f"Ground truth {ground_truth} not in label set {fixed_labels}"
-  if any(["speechless-llama2" in model, "llama-zs" in model, "opt-iml-30b-zs" in model, "ArcheType-llama" in model, "ArcheType-llama-oc" in model]):
-    set_pipeline(k=1, args=args)
-  prompt = prompt_context_insert(context_labels, context, args["MAX_LEN"], model, args, do_kshot=do_kshot)
-  
-#   d_p = prompt_dict.get(prompt, -1)
-#   #skip existing logic
-#   if d_p != -1 and "skip-existing" in method:
-#     # recompute_results(prompt_dict, prompt, "llama", cbc, lsd)
-#     return prompt
-#   elif d_p != -1:
-#     while prompt_dict.get(prompt, -1) != -1:
-#         prompt = prompt + "*"
-  #response logic
-  if not response:
-    orig_ans = ans_n = ""
-  else:
-    remapped = False
-    if args['rules']:
-        orig_ans = apply_basic_rules(limited_context, None, lsd)
+    if "check_labels" in method:
+        assert ground_truth in fixed_labels, f"Ground truth {ground_truth} not in label set {fixed_labels}"
+    if any(["speechless-llama2" in model, "llama-zs" in model, "opt-iml-30b-zs" in model, "ArcheType-llama" in model, "ArcheType-llama-oc" in model]):
+        set_pipeline(k=1, args=args)
+    prompt = prompt_context_insert(context_labels, context, args["MAX_LEN"], model, args, do_kshot=do_kshot)
+
+    #   d_p = prompt_dict.get(prompt, -1)
+    #   #skip existing logic
+    #   if d_p != -1 and "skip-existing" in method:
+    #     # recompute_results(prompt_dict, prompt, "llama", cbc, lsd)
+    #     return prompt
+    #   elif d_p != -1:
+    #     while prompt_dict.get(prompt, -1) != -1:
+    #         prompt = prompt + "*"
+    #response logic
+    if not response:
+        orig_ans = ans_n = ""
     else:
-        orig_ans = None
-    if orig_ans is None:
-        #model query
-        orig_ans = query_correct_model(model, prompt, context_labels, context, session, link, lsd, args)
-    else:
-        remapped = True    
-    #special cases
-    if args['rules']:
-        # ---------- d4 ------
-        if orig_ans == 'abbreviation of agency' and any(len(s) > 15 for s in limited_context):
-            ans_n = "nyc agency name"
+        remapped = False
+        if args['rules']:
+            orig_ans = apply_basic_rules(limited_context, None, lsd)
+        else:
+            orig_ans = None
+        if orig_ans is None:
+            #model query
+            orig_ans = query_correct_model(model, prompt, context_labels, context, session, link, lsd, args)
+        else:
             remapped = True
-        # ---------- pubchem ------
-        elif orig_ans == 'patent title' and any(len(s) > 1000 for s in limited_context):
-            ans_n = "abstract for patent"
+            #special cases
+        if args['rules']:
+            # ---------- d4 ------
+            if orig_ans == 'abbreviation of agency' and any(len(s) > 15 for s in limited_context):
+                ans_n = "nyc agency name"
+                remapped = True
+            # ---------- pubchem ------
+            elif orig_ans == 'patent title' and any(len(s) > 1000 for s in limited_context):
+                ans_n = "abstract for patent"
+                remapped = True
+        # ------------------------ 2step ------------------------
+        if orig_ans == 'article' and "2step" in lsd['name']:
+            context_labels = '2step'
+            prompt = prompt_context_insert(context_labels, context, args["MAX_LEN"], model, args, do_kshot=do_kshot)
+            orig_ans = query_correct_model(model, prompt, context_labels, context, session, link, lsd, args)
+            orig_ans = 'article from ' + orig_ans
+            ans_n = orig_ans.lower()
             remapped = True
-    # ------------------------ 2step ------------------------
-    if orig_ans == 'article' and "2step" in lsd['name']:
-        context_labels = '2step'
-        prompt = prompt_context_insert(context_labels, context, args["MAX_LEN"], model, args, do_kshot=do_kshot)
-        orig_ans = query_correct_model(model, prompt, context_labels, context, session, link, lsd, args)
-        orig_ans = 'article from ' + orig_ans
-        ans_n = orig_ans.lower()
-        remapped = True
-    # ------------------------ 2step ------------------------
-    #hierarchical matching logic
-    else: 
-        if "hierarchical" in method and dtype == "other" and orig_ans not in ['email', 'URL', 'WebHTMLAction', 'Photograph']:
-            next_label_set = sotab_other_hier.get(orig_ans, -1)
-            if next_label_set == -1:
-                print(f"Original answer {orig_ans} not found in hierarchy")
-                next_label_set = sotab_other_hier['text']
-            fixed_labels = list(set([fix_labels(s, lsd) for s in next_label_set])) 
-            context_labels = ", ".join(fixed_labels)
-            fixed_labels = sorted(fixed_labels, key=len, reverse=True)
-            orig_ans = query_correct_model(model, prompt, context_labels, context, session, link, lsd, args)  
-    #fuzzy matching logic
-    if orig_ans.lower() not in all_labels:
-        # print(f"Original answer was {orig_ans.lower()}")
-        # print(f"{len(all_labels)} labels are {all_labels}")
-        # print("Fuzzy matching")
-        ans_n = fuzzy_label_match(orig_ans, fixed_labels, session, link, prompt, lsd, model, method=method, args=args).lower()
-    else:
-        ans_n = orig_ans.lower()
-  if "skip-eval" in method:
-    ans_n = None
-  res = (ans_n == ground_truth)
-  ans_dict = {"response" : ans_n, 
-              "context" : context, 
-              "ground_truth" : ground_truth, 
-              "correct" : res, 
-              "original_model_answer" : orig_ans, 
-              "rules" : remapped}
-  # prompt_dict[prompt] = ans_dict
-  return prompt, ans_dict
+        # ------------------------ 2step ------------------------
+        #hierarchical matching logic
+        else:
+            if "hierarchical" in method and dtype == "other" and orig_ans not in ['email', 'URL', 'WebHTMLAction', 'Photograph']:
+                next_label_set = sotab_other_hier.get(orig_ans, -1)
+                if next_label_set == -1:
+                    print(f"Original answer {orig_ans} not found in hierarchy")
+                    next_label_set = sotab_other_hier['text']
+                fixed_labels = list(set([fix_labels(s, lsd) for s in next_label_set]))
+                context_labels = ", ".join(fixed_labels)
+                fixed_labels = sorted(fixed_labels, key=len, reverse=True)
+                orig_ans = query_correct_model(model, prompt, context_labels, context, session, link, lsd, args)
+                #fuzzy matching logic
+        if orig_ans.lower() not in all_labels:
+            # print(f"Original answer was {orig_ans.lower()}")
+            # print(f"{len(all_labels)} labels are {all_labels}")
+            # print("Fuzzy matching")
+            ans_n = fuzzy_label_match(orig_ans, fixed_labels, session, link, prompt, lsd, model, method=method, args=args).lower()
+        else:
+            ans_n = orig_ans.lower()
+    if "skip-eval" in method:
+        ans_n = None
+    res = (ans_n == ground_truth)
+    ans_dict = {"response" : ans_n,
+                "context" : context,
+                "ground_truth" : ground_truth,
+                "correct" : res,
+                "original_model_answer" : orig_ans,
+                "rules" : remapped}
+    # prompt_dict[prompt] = ans_dict
+    return prompt, ans_dict
 
 def get_sent_model(args):
     args["sent_model"] = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2', device='cpu')
@@ -280,8 +296,8 @@ def set_pipeline(k=1, args=None):
     args['params']['top_p'] = 0.8 - (0.1 * k)
     args["pipe"] = pipeline(
         "text-generation",
-        model=args["base_model"], 
-        tokenizer=args["tokenizer"], 
+        model=args["base_model"],
+        tokenizer=args["tokenizer"],
         max_length=args["MAX_LEN"],
         temperature=args['params']['temperature'],
         top_p=args['params']['top_p'],
@@ -291,7 +307,7 @@ def set_pipeline(k=1, args=None):
     )
     args["local_llm"] = HuggingFacePipeline(pipeline=args["pipe"],pipeline_kwargs=args["params"])
     args["llm_chain"] = LLMChain(
-        prompt=args["pt"], 
+        prompt=args["pt"],
         llm=args["local_llm"]
     )
     return args
@@ -300,21 +316,21 @@ def init_model(model, args):
     if model == "doduo":
         from doduo.doduo import Doduo
     with torch.no_grad():
-        torch.cuda.empty_cache()        
+        torch.cuda.empty_cache()
     if "speechless-llama2" in model:
         args["MAX_LEN"]=2048
         tokenizer = AutoTokenizer.from_pretrained("uukuguy/speechless-llama2-13b")
         tokenizer.add_special_tokens({'pad_token': '[PAD]'})
-        base_model = AutoModelForCausalLM.from_pretrained("uukuguy/speechless-llama2-13b", torch_dtype=torch.float16, load_in_8bit=True, device_map="auto")        
-    elif "llama" in model: 
+        base_model = AutoModelForCausalLM.from_pretrained("uukuguy/speechless-llama2-13b", torch_dtype=torch.float16, load_in_8bit=True, device_map="auto")
+    elif "llama" in model:
         LLAMA_PATH = args["model_path"]
         args["MAX_LEN"]=2048
         tokenizer = LlamaTokenizer.from_pretrained(LLAMA_PATH)
         if "ArcheType-llama" in model:
             base_model = AutoModelForCausalLM.from_pretrained(LLAMA_PATH,
-                                                torch_dtype=torch.float16,
-                                                load_in_8bit=True,
-                                                device_map='auto')
+                                                              torch_dtype=torch.float16,
+                                                              load_in_8bit=True,
+                                                              device_map='auto')
         else:
             config = AutoConfig.from_pretrained(LLAMA_PATH,
                                                 torch_dtype=torch.float16,
@@ -324,8 +340,8 @@ def init_model(model, args):
             base_model.tie_weights()
             device_map = infer_auto_device_map(base_model, max_memory={0: "60GiB", "cpu": "96GiB"})
             base_model = load_checkpoint_and_dispatch(
-                base_model, 
-                LLAMA_PATH, 
+                base_model,
+                LLAMA_PATH,
                 device_map=device_map
             )
     elif "alpaca-7b-zs" in model:
@@ -368,7 +384,7 @@ def init_model(model, args):
         base_model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-xxl", device_map="auto", torch_dtype=torch.float16, load_in_8bit=True) #load_in_4bit=True
     elif "flan-ul2-zs" in model:
         args["MAX_LEN"]=512
-        base_model = T5ForConditionalGeneration.from_pretrained("google/flan-ul2", torch_dtype=torch.bfloat16, device_map="auto")                                                                 
+        base_model = T5ForConditionalGeneration.from_pretrained("google/flan-ul2", torch_dtype=torch.bfloat16, device_map="auto")
         tokenizer = AutoTokenizer.from_pretrained("google/flan-ul2")
     elif "galpaca-30b-zs" in model:
         args["MAX_LEN"]=2048
@@ -483,9 +499,10 @@ def fuzzy_label_match(orig_ans, fixed_labels, session, link, prompt, lsd, model,
                 ans_n = args['llm_chain'].run(prompt)
                 if "speechless-llama2" in model:
                     ans_n = ans_n.split(end_of_sentence)[-1]
-            elif any(["topp-zs" in model, "flan-t5-xxl-zs" in model, "flan-ul2-zs" in model]):
+            elif any(["topp-zs" in model, "flan-t5-xxl-zs" in model, "flan-ul2-zs" in model, "flan-t5-base-zs" in model]):
                 ans_n = get_topp_resp(prompt, k, args)
             else:
+                #print("HELLO")
                 print("Running default (local saved checkpoint) llama resampling -- THIS SHOULD NOT HAPPEN if you are running zero-shot models, please check model name")
                 top_p = args['params']['top_p']
                 temp = args['params']['temperature']
@@ -500,40 +517,40 @@ def fuzzy_label_match(orig_ans, fixed_labels, session, link, prompt, lsd, model,
     return default_ans
 
 def get_sherlock_resp(df, gt_df, prompt_dict, model, label_indices, base_prompt, lsd, args):
-  isd4 = "d4" in lsd['name']
-#   if "sherlock" in model:
-#     model = sherlock_model
-#     data_m = pd.Series(df[label_indices].astype(str).T.values.tolist())
-#     extract_features(
-#         "../temporary.csv",
-#         data_m
-#     )
-#     feature_vectors = pd.read_csv("../temporary.csv", dtype=np.float32)
-#     predicted_labels = model.predict(feature_vectors, "sherlock")
-#     iter_len = len(data_m)
-  if "doduo" in model:
-    data_m = df[label_indices]
-    annot_m = args["base_model"].annotate_columns(data_m)
-    predicted_labels = annot_m.coltypes
-    iter_len = len(predicted_labels)
-  predicted_labels_dict = {i : sherlock_to_cta.get(predicted_labels[i], [predicted_labels[i]]) for i in range(iter_len)}
-  
-  for idx, label_idx in zip(range(iter_len), label_indices):
-    prompt = base_prompt + "_" + str(label_idx)
-    if isd4:
-        ans = predicted_labels[0]
-        label = [s.lower() for s in lsd['d4_map'][gt_df]]
-    else:
-        gt_row = gt_df[gt_df['column_index'] == label_idx]
-        if len(gt_row) != 1:
-          continue
-        label = fix_labels(gt_row['label'].item(), lsd)
-        ans = [fix_labels(item, lsd) for item in predicted_labels_dict[idx]]
-    if isd4:
-        res = ans in label
-    else:
-        assert isinstance(ans, list), "ans should be a list"
-        res = label in ans
-    ans_dict = {"response" : ans, "context" : None, "ground_truth" : label, "correct" : res, "orig_model_label" : predicted_labels[idx]}
-    prompt_dict[prompt] = ans_dict
-  return prompt
+    isd4 = "d4" in lsd['name']
+    #   if "sherlock" in model:
+    #     model = sherlock_model
+    #     data_m = pd.Series(df[label_indices].astype(str).T.values.tolist())
+    #     extract_features(
+    #         "../temporary.csv",
+    #         data_m
+    #     )
+    #     feature_vectors = pd.read_csv("../temporary.csv", dtype=np.float32)
+    #     predicted_labels = model.predict(feature_vectors, "sherlock")
+    #     iter_len = len(data_m)
+    if "doduo" in model:
+        data_m = df[label_indices]
+        annot_m = args["base_model"].annotate_columns(data_m)
+        predicted_labels = annot_m.coltypes
+        iter_len = len(predicted_labels)
+    predicted_labels_dict = {i : sherlock_to_cta.get(predicted_labels[i], [predicted_labels[i]]) for i in range(iter_len)}
+
+    for idx, label_idx in zip(range(iter_len), label_indices):
+        prompt = base_prompt + "_" + str(label_idx)
+        if isd4:
+            ans = predicted_labels[0]
+            label = [s.lower() for s in lsd['d4_map'][gt_df]]
+        else:
+            gt_row = gt_df[gt_df['column_index'] == label_idx]
+            if len(gt_row) != 1:
+                continue
+            label = fix_labels(gt_row['label'].item(), lsd)
+            ans = [fix_labels(item, lsd) for item in predicted_labels_dict[idx]]
+        if isd4:
+            res = ans in label
+        else:
+            assert isinstance(ans, list), "ans should be a list"
+            res = label in ans
+        ans_dict = {"response" : ans, "context" : None, "ground_truth" : label, "correct" : res, "orig_model_label" : predicted_labels[idx]}
+        prompt_dict[prompt] = ans_dict
+    return prompt
