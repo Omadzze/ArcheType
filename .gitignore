@@ -157,3 +157,9 @@ src/misc
 .vscode
 src/debug
 core.*
+
+./WHO_data
+./papermill_notebooks
+./custom_data_logs
+./custom_data
+./notebooks/*

@@ -365,7 +365,7 @@ def init_model(model, args):
     elif "flan-t5-xxl-zs" in model:
         args["MAX_LEN"]=512
         tokenizer = AutoTokenizer.from_pretrained("google/flan-t5-xxl")
-        base_model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-xxl", device_map="auto", torch_dtype=torch.float16, load_in_8bit=True)
+        base_model = AutoModelForSeq2SeqLM.from_pretrained("google/flan-t5-xxl", device_map="auto", torch_dtype=torch.float16, load_in_8bit=True) #load_in_4bit=True
     elif "flan-ul2-zs" in model:
         args["MAX_LEN"]=512
         base_model = T5ForConditionalGeneration.from_pretrained("google/flan-ul2", torch_dtype=torch.bfloat16, device_map="auto")                                                                 
