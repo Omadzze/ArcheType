@@ -11,8 +11,8 @@ training_env = os.environ.copy()
 #env["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
 training_env["CUDA_VISIBLE_DEVICES"] = "4,5,6,7"
 
-infernce_env = os.environ.copy()
-infernce_env["CUDA_VISIBLE_DEVICES"] = "6,7"
+inference_env = os.environ.copy()
+inference_env["CUDA_VISIBLE_DEVICES"] = "6,7"
 
 # ────────────────────────────────────────────────────────────────
 #  Edit these to your own paths
@@ -79,6 +79,57 @@ NOTEBOOK_PARAMS = {
     "save_log": None,
 }
 
+"""
+# ────────────────────────────────────────────────────────────────
+#  1) TRAIN only once with the best hyperparams
+BEST_EPOCHS = 10
+BEST_LR      = 2e-5
+best_name    = f"e{BEST_EPOCHS}_lr{BEST_LR:.0e}"
+
+train_cmd = (
+        ["conda", "run", "-n", "alpaca"]
+        + TRAIN_ARGS
+        + [
+            "--num_train_epochs", str(BEST_EPOCHS),
+            "--learning_rate",      str(BEST_LR),
+            "--output_dir",         OUTPUT_WEIGHTS_ROOT,
+            "--run_name",           best_name,
+        ]
+)
+print(f"\n→ TRAIN {best_name}")
+subprocess.run(train_cmd, check=True, env=training_env)
+"""
+# ────────────────────────────────────────────────────────────────
+#  2) INFERENCE N times to capture variability
+N_RUNS = 10
+inference_results = []
+
+best_name = "flan_ul2"
+
+for run_idx in range(1, N_RUNS + 1):
+    run_id = f"{best_name}_run{run_idx}"
+    pm_cmd = [
+        "conda", "run", "-n", "archetype",
+        "--no-capture-output",
+        "papermill",
+        NOTEBOOK,
+        str(PAPERMILL_ROOT / f"test_out_{run_id}.ipynb"),
+        "-p", "tune", run_id,
+        # add any other -p overrides you need
+    ]
+    print(f"→ INFERENCE {run_id}")
+    subprocess.run(pm_cmd, check=True, env=inference_env)
+
+    # Optionally: after each run you could parse the notebook output
+    # or a log file to extract F1 & accuracy, e.g.:
+    # metrics = parse_metrics_from_log(f"/path/to/logs/{run_id}.json")
+    # inference_results.append(metrics)
+
+# ────────────────────────────────────────────────────────────────
+print("\n=== ALL DONE! ===")
+
+# Old code for the tuning model
+"""
 #  Your hyperparameter grid
 GRID = [
     (3, 1e-5),
@@ -132,7 +183,8 @@ for epochs, lr in GRID:
         #"-p", "save_log", logfn,
     ]
     print(f"→ INFERENCE {name}")
-    subprocess.run(pm_cmd, check=True, env=infernce_env)
+    subprocess.run(pm_cmd, check=True, env=inference_env)
 
 # ────────────────────────────────────────────────────────────────
 print("\n=== EVERYTHING IS DONE! ===")
+"""
