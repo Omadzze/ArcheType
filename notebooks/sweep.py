@@ -104,7 +104,7 @@ subprocess.run(train_cmd, check=True, env=training_env)
 N_RUNS = 10
 inference_results = []
 
-best_name = "flan_ul2"
+best_name = "llama-3.1"
 
 for run_idx in range(1, N_RUNS + 1):
     run_id = f"{best_name}_run{run_idx}"
