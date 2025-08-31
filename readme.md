@@ -1,3 +1,38 @@
+# Extensions and Modifications in This Repository
+
+This repository extends the original ArcheType framework with additional notebooks for dataset creation, custom experiments, and semantic type generation using large language models (LLMs). Below is an overview of the added components:
+
+`archetype/notebooks/`
+
+Contains notebooks used throughout the project for dataset preparation, fine-tuning, and evaluation:
+
+- **`create_custom_dataset.ipynb`**  
+  Notebook that creates an instruction-tuned dataset for fine-tuning LLM models.  
+  This step ensures the model can be trained on task-specific instructions for semantic type annotation.
+
+- **`label-generation.ipynb`**  
+  Notebook that runs semantic type generation using the LLaMA model.  
+  It explores how LLMs can generate new column labels beyond the fixed type set.
+
+- **`custom_inference.ipynb`**  
+  Notebook for running the Column Type Annotation (CTA) task using an LLM model.  
+  It performs direct inference on datasets to classify columns into semantic types.
+
+- **`archetype_label_generation.ipynb`**  
+  Notebook used for final experiments in semantic type generation.  
+  Multiple runs were conducted here to ensure stability and reproducibility of results.
+
+- **`archetype_experiments_custom.ipynb`**  
+  Notebook used for final experiments on the CTA task.  
+  Like the label generation experiments, this was repeated multiple times for evaluation consistency.
+
+---
+
+These extensions make the repository more practical by enabling:  
+- Creation of custom, instruction-tuned datasets.  
+- Fine-tuning and inference of LLMs (e.g., LLaMA) for CTA and semantic type generation.  
+- Systematic evaluation of LLM-based approaches through repeated experiments.  
+
 # ArcheType: A novel framework for open-source column type annotation using large language models 
 
 This repository contains the codebase of our paper ArcheType: A novel framework for open-source column type annotation using large language models, available at arXiv.
